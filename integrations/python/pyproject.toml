@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tribute-python"
+version = "0.1.0"
+description = "Tribute proxy integrations: core pricing logic and framework adapters"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+"tribute-dev" = "tribute_core.devtools:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests"]

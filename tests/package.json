@@ -1,0 +1,20 @@
+{
+  "name": "@tribute/tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tribute/durable-objects": "workspace:^0.1.0",
+    "@tribute/edge-proxy": "workspace:^0.1.0"
+  },
+  "scripts": {
+    "test": "vitest --run",
+    "test:integration": "vitest --run integration"
+  },
+  "devDependencies": {
+    "vitest": "^1.4.0",
+    "wrangler": "^4.40.1",
+    "miniflare": "^3.20250718.1",
+    "esbuild": "^0.20.2"
+  }
+}

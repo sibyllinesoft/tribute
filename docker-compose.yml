@@ -1,0 +1,88 @@
+services:
+  tribute-dos:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    command:
+      - /app/scripts/docker/dev-worker.sh
+      - infra/wrangler-dos.toml
+      - "8789"
+    environment:
+      NODE_ENV: development
+      WRANGLER_TELEMETRY_DISABLE: "1"
+    ports:
+      - "8789:8789"
+    volumes:
+      - .:/app
+      - wrangler_state:/app/.wrangler/state
+
+  tribute-api:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    depends_on:
+      - tribute-dos
+    command:
+      - /app/scripts/docker/dev-worker.sh
+      - infra/wrangler-api.toml
+      - "8788"
+    environment:
+      NODE_ENV: development
+      TOKEN_SIGNING_KEY: dev-signing-key
+      ENABLE_DEV_BOOTSTRAP: "true"
+      WRANGLER_TELEMETRY_DISABLE: "1"
+    ports:
+      - "8788:8788"
+    volumes:
+      - .:/app
+      - wrangler_state:/app/.wrangler/state
+
+  tribute-proxy:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    depends_on:
+      - tribute-dos
+      - tribute-api
+    command:
+      - /app/scripts/docker/dev-worker.sh
+      - infra/wrangler.toml
+      - "8787"
+    environment:
+      NODE_ENV: development
+      EXAMPLE_ORIGIN_TOKEN: local-dev-secret
+      WRANGLER_TELEMETRY_DISABLE: "1"
+    ports:
+      - "8787:8787"
+    volumes:
+      - .:/app
+      - wrangler_state:/app/.wrangler/state
+
+  fastapi-origin:
+    build:
+      context: ./examples/origins/fastapi
+    environment:
+      TRIBUTE_API_KEY: local-dev-secret
+    ports:
+      - "9000:9000"
+
+  fastify-origin:
+    build:
+      context: ./examples/origins/fastify
+    environment:
+      TRIBUTE_API_KEY: local-dev-secret
+    ports:
+      - "3300:3000"
+
+  tribute-bootstrap:
+    image: curlimages/curl:8.11.1
+    working_dir: /app
+    entrypoint: ["/bin/sh", "/app/scripts/docker/bootstrap.sh"]
+    depends_on:
+      - tribute-api
+      - tribute-proxy
+      - tribute-dos
+      - fastapi-origin
+      - fastify-origin
+    volumes:
+      - .:/app
+
+volumes:
+  wrangler_state:

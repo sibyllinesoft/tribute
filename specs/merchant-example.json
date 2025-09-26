@@ -1,0 +1,32 @@
+{
+  "merchantId": "merchant-1",
+  "origin": {
+    "baseUrl": "https://origin.example.com",
+    "auth": {
+      "kind": "api_key",
+      "secretRef": "env:ORIGIN_TOKEN",
+      "header": "x-api-key"
+    }
+  },
+  "pricing": {
+    "policyVersion": 1,
+    "rules": [
+      {
+        "match": { "method": "GET", "path": "/v1/demo" },
+        "price": { "flat": 0.05 }
+      }
+    ]
+  },
+  "cache": {
+    "maxKvBytes": 120000,
+    "ttlSeconds": 604800
+  },
+  "context": {
+    "forwardCct": false,
+    "allowedClaims": []
+  },
+  "limits": {
+    "qps": 100,
+    "maxArtifactMb": 50
+  }
+}

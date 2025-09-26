@@ -1,0 +1,29 @@
+name = "tribute-api"
+main = "../api/src/index.ts"
+compatibility_date = "2024-03-25"
+logpush = true
+
+[vars]
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "USER_WALLET_DO"
+class_name = "UserWalletDurableObject"
+script_name = "tribute-durable-objects"
+
+[[durable_objects.bindings]]
+name = "MERCHANT_DO"
+class_name = "MerchantDurableObject"
+script_name = "tribute-durable-objects"
+
+[[kv_namespaces]]
+binding = "JWK_KV"
+id = "__REPLACE_WITH_JWK_NS__"
+preview_id = "__LOCAL_JWK_NS__"
+
+[[queues.producers]]
+queue = "stripe-webhooks"
+binding = "STRIPE_WEBHOOK_QUEUE"
+
+[[queues.consumers]]
+queue = "stripe-webhooks"

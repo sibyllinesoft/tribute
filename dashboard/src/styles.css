@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 min-h-screen;
+  background-image: radial-gradient(circle at 15% 20%, rgba(99, 102, 241, 0.35), transparent 45%),
+    radial-gradient(circle at 80% 0%, rgba(59, 130, 246, 0.25), transparent 50%),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.95) 0%, #020617 60%);
+  background-repeat: no-repeat;
+}
+
+.badge {
+  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide;
+}
+
+.badge-info {
+  @apply bg-sky-500/20 text-sky-200;
+}
+
+.badge-debug {
+  @apply bg-slate-500/20 text-slate-200;
+}
+
+.badge-warn {
+  @apply bg-amber-400/20 text-amber-200;
+}
+
+.badge-error {
+  @apply bg-rose-500/20 text-rose-200;
+}
+
+.badge-active {
+  @apply bg-emerald-500/20 text-emerald-200;
+}
+
+.badge-trialing {
+  @apply bg-indigo-400/20 text-indigo-200;
+}
+
+.badge-paused {
+  @apply bg-slate-500/25 text-slate-200;
+}
+
+.badge-expired {
+  @apply bg-rose-500/20 text-rose-200;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}

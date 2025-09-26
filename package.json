@@ -1,0 +1,41 @@
+{
+  "name": "tribute",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tribute metered proxy platform",
+  "license": "BUSL-1.1",
+  "workspaces": [
+    "edge-proxy",
+    "dos",
+    "api",
+    "dashboard",
+    "adapters/*",
+    "tests",
+    "integrations/js"
+  ],
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "postinstall": "node ./scripts/postinstall.mjs",
+    "dev": "pnpm run dev:stack",
+    "dev:dos": "wrangler dev --config infra/wrangler-dos.toml --port=0 --inspector-port=0",
+    "dev:proxy": "wrangler dev --config infra/wrangler.toml --port=0 --inspector-port=0",
+    "dev:api": "wrangler dev --config infra/wrangler-api.toml --port=0 --inspector-port=0",
+    "dev:dashboard": "pnpm --filter dashboard dev",
+    "dev:stack": "concurrently -n dos,proxy,api,ui -c magenta,cyan,green,blue \"pnpm run dev:dos\" \"pnpm run dev:proxy\" \"pnpm run dev:api\" \"pnpm run dev:dashboard\"",
+    "dev:stack:headless": "concurrently -n dos,proxy,api -c magenta,cyan,green \"pnpm run dev:dos\" \"pnpm run dev:proxy\" \"pnpm run dev:api\"",
+    "dev:headless": "pnpm run dev:stack:headless",
+    "test:integration": "pnpm --filter tests test:integration"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240329.0",
+    "@types/node": "^20.11.30",
+    "typescript": "^5.4.2",
+    "vitest": "^1.4.0",
+    "tsx": "^4.7.1",
+    "concurrently": "^9.2.1",
+    "wrangler": "^4.40.1"
+  },
+  "packageManager": "pnpm@10.15.0"
+}

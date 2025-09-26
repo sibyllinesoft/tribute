@@ -1,0 +1,6 @@
+name = "tribute-edge-proxy-test"
+main = "../edge-proxy/src/index.ts"
+compatibility_date = "2024-03-25"
+
+[vars]
+ENVIRONMENT = "test"

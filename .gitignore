@@ -1,0 +1,46 @@
+# Compiled artifacts and build outputs
+.dist/
+build/
+coverage/
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.npm/
+pnpm-debug.log*
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local Wrangler/miniflare state
+.wrangler/
+.mf/
+.wrangler-state/
+
+# Environment and secrets
+.env
+.env.*
+*.env
+*.env.*
+.dev.vars
+.dev.vars.*
+
+# Vite / tooling temp files
+*.timestamp-*
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Docker/Terraform/etc
+*.tfstate*
+.terraform/
+docker-compose.override.yml
+
+# OS generated
+.DS_Store
+Thumbs.db

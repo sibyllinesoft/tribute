@@ -1,0 +1,17 @@
+{
+  "name": "@tribute/integrations-js",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r --filter './integrations/js/packages/*' --if-present build",
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^1.6.1",
+    "tsup": "^7.2.0",
+    "typescript": "^5.4.2",
+    "vitest": "^1.4.0"
+  }
+}

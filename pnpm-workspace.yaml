@@ -1,0 +1,9 @@
+packages:
+  - edge-proxy
+  - dos
+  - api
+  - dashboard
+  - adapters/*
+  - tests
+  - integrations/js
+  - integrations/js/packages/*

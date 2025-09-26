@@ -1,0 +1,17 @@
+{
+  "name": "@tribute/express",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "private": true,
+  "dependencies": {
+    "@tribute/core": "workspace:^0.1.0"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

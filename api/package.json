@@ -1,0 +1,22 @@
+{
+  "name": "@tribute/api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev --config ../infra/wrangler-api.toml",
+    "build": "wrangler deploy --config ../infra/wrangler-api.toml --dry-run",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tribute/durable-objects": "workspace:^0.1.0",
+    "itty-router": "^4.0.23",
+    "jose": "^5.2.4",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "vitest": "^1.4.0",
+    "wrangler": "^4.40.1"
+  }
+}
