@@ -17,57 +17,86 @@ docker compose up --build
 
 Compose launches the following services:
 
-- `tribute-dos`, `tribute-api`, `tribute-proxy` — Workers run with `wrangler dev`
-  and share a persistent state volume for Durable Objects, KV, and R2.
-- `fastapi-origin` on port `9000` and `fastify-origin` exposed on host port `3300` (container port `3000`) — sample
+- `tribute-workers` — runs the Durable Objects, API worker, and proxy in one container
+  so local Durable Object calls work out of the box. Ports 8787 (proxy), 8788 (API),
+  and 8789 (Durable Objects) are exposed to the host. A shared `.wrangler/state`
+  volume keeps local DO state between restarts.
+- `tribute-dashboard` — serves the Tribute control panel via Vite dev server on
+  <http://localhost:5173>. Use the **Merchant Apps** tab to edit route pricing
+  for each merchant app seeded by bootstrap.
+- `tribute-console` — nginx container that exposes a single static page with
+  tabs for the dashboard, proxied FastAPI demo (`/apps/fastapi` routed through
+  the Tribute worker), the raw Fastify origin, and JSON inspection endpoints at
+  <http://localhost:8080>. Handy for hopping between tools while exercising the
+  stack.
+- `fastapi-origin` on host port `9100` (container `9000`) and `fastify-origin` on host port `3300` (container `3000`) — sample
   metered origins secured with an API key (`x-api-key: local-dev-secret`).
 - `tribute-bootstrap` — waits for the stack to become healthy, seeds merchant
-  configs, and funds a `demo-user` wallet with credits.
+  configs, preloads the Merchant App Durable Object with route pricing
+  (flat vs. subscription), and funds a `demo-user` wallet with credits.
+  After the merchant apps are created, bootstrap calls the OpenAPI and sitemap
+  refresh endpoints so the proxy inspects each origin's Swagger document and
+  sitemap in order to enumerate API routes and site pages. Fastify serves its
+  spec at `/docs/json` and sitemap at `/sitemap.xml`; FastAPI at `/openapi.json`
+  and `/sitemap.xml`.
 
 Once bootstrap reports `bootstrap complete`, the system is ready for requests.
 You can tail logs with `docker compose logs -f tribute-bootstrap`.
 
-## Issue a token and call FastAPI
+## Call the proxied routes
+
+### Inspect the seeded Merchant Apps
+
+You can verify the Merchant App durable state via the API worker:
 
 ```bash
-TOKEN=$(curl -s -X POST http://127.0.0.1:8788/v1/tokens/issue \
-  -H 'x-user-id: demo-user' \
-  -H 'content-type: application/json' \
-  -d '{
-    "rid": "/v1/demo",
-    "method": "GET",
-    "merchantId": "merchant-fastapi",
-    "inputs": {"demo": true},
-    "originHost": "fastapi-origin"
-  }' | jq -r '.token')
-
-curl -v http://127.0.0.1:8787/v1/demo \
-  -H "Authorization: Bearer ${TOKEN}"
+curl http://127.0.0.1:8788/v1/merchant-apps/merchant-fastapi | jq
 ```
 
-The response includes proxy metadata headers and the FastAPI payload. Repeating
-the request will hit the cache unless the origin content changes.
+The response lists each proxied route, its pricing mode (`metered` or
+`subscription`), and any upgrade URL shown to users when a subscription is
+required.
 
-## Exercise the Fastify origin
+Auto-preflight is handled entirely by the proxy. Provide your app's session
+token (or whatever header your app uses for identity) and call the proxied URL
+directly:
 
 ```bash
-TOKEN=$(curl -s -X POST http://127.0.0.1:8788/v1/tokens/issue \
-  -H 'x-user-id: demo-user' \
-  -H 'content-type: application/json' \
-  -d '{
-    "rid": "/v1/demo",
-    "method": "GET",
-    "merchantId": "merchant-fastify",
-    "inputs": {"demo": true},
-    "originHost": "fastify-origin"
-  }' | jq -r '.token')
-
-curl -v http://127.0.0.1:8787/v1/demo \
-  -H "Authorization: Bearer ${TOKEN}"
+curl --resolve merchant-fastapi:8787:127.0.0.1 \
+  -v http://merchant-fastapi:8787/v1/demo \
+  -H 'Authorization: demo-user'
 ```
 
-To test POST flows, update `method` to `POST`, set `rid` to `/v1/echo`, and pass
-`-d '{"hello":"world"}'` to the proxy request.
+You should see `X-Final-Price`, `X-Receipt-Id`, and `X-Proxy-Context` headers in the response.
+Repeat the call to confirm the proxy serves the cached artifact.
+
+The bootstrap config also created a subscription-gated route for the FastAPI
+merchant. Hitting it without an entitlement returns the expected 402 guard:
+
+```bash
+curl --resolve merchant-fastapi:8787:127.0.0.1 \
+  -v http://merchant-fastapi:8787/v1/echo \
+  -X POST \
+  -H 'content-type: application/json' \
+  -H 'Authorization: demo-user' \
+  --data '{"message":"hello"}'
+```
+
+Expect a `402` response indicating the call exceeded the default cap. The response
+includes `X-Required-Max-Price` with the amount the proxy would need to proceed.
+Once the control plane is connected you can attach entitlements or raise the cap
+to allow the call.
+
+To exercise the Fastify origin, target the same proxied paths; the merchant app
+config seeded by bootstrap maps `merchant-fastify` to the Fastify routes with
+flat metered pricing. Resolve the host header the same way:
+
+```bash
+curl --resolve merchant-fastify:8787:127.0.0.1 \
+  -v http://merchant-fastify:8787/v1/demo \
+  -H 'Authorization: demo-user'
+```
+
 
 ## Tear down
 

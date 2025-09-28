@@ -1,67 +1,75 @@
 services:
-  tribute-dos:
+  tribute-workers:
     image: node:20-bookworm-slim
     working_dir: /app
     command:
-      - /app/scripts/docker/dev-worker.sh
-      - infra/wrangler-dos.toml
-      - "8789"
+      - /bin/sh
+      - -lc
+      - |
+        corepack enable >/dev/null 2>&1 || true
+        if [ ! -d node_modules ]; then
+          pnpm install --frozen-lockfile
+        fi
+        /app/scripts/docker/dev-worker.sh infra/wrangler-dos.toml 8789 &
+        /app/scripts/docker/dev-worker.sh infra/wrangler-api.toml 8788 &
+        /app/scripts/docker/dev-worker.sh infra/wrangler.toml 8787 &
+        wait
     environment:
       NODE_ENV: development
+      TOKEN_SIGNING_KEY: dev-signing-key
+      ENABLE_DEV_BOOTSTRAP: "true"
+      EXAMPLE_ORIGIN_TOKEN: local-dev-secret
+      ALLOWED_ORIGINS: "http://localhost:5173 http://127.0.0.1:5173"
       WRANGLER_TELEMETRY_DISABLE: "1"
     ports:
+      - "8787:8787"
+      - "8788:8788"
       - "8789:8789"
     volumes:
       - .:/app
       - wrangler_state:/app/.wrangler/state
 
-  tribute-api:
+  tribute-dashboard:
     image: node:20-bookworm-slim
     working_dir: /app
-    depends_on:
-      - tribute-dos
     command:
-      - /app/scripts/docker/dev-worker.sh
-      - infra/wrangler-api.toml
-      - "8788"
+      - /bin/sh
+      - -lc
+      - |
+        corepack enable >/dev/null 2>&1 || true
+        if [ ! -d node_modules ]; then
+          pnpm install --frozen-lockfile
+        fi
+        pnpm --filter dashboard dev
     environment:
       NODE_ENV: development
-      TOKEN_SIGNING_KEY: dev-signing-key
-      ENABLE_DEV_BOOTSTRAP: "true"
-      WRANGLER_TELEMETRY_DISABLE: "1"
+      VITE_TRIBUTE_ENABLE_AUTH: "false"
+      VITE_TRIBUTE_ADMIN_USER_ID: admin-user
+      VITE_TRIBUTE_DEFAULT_USER_ID: demo-user
     ports:
-      - "8788:8788"
+      - "5173:5173"
     volumes:
       - .:/app
-      - wrangler_state:/app/.wrangler/state
 
-  tribute-proxy:
-    image: node:20-bookworm-slim
-    working_dir: /app
-    depends_on:
-      - tribute-dos
-      - tribute-api
-    command:
-      - /app/scripts/docker/dev-worker.sh
-      - infra/wrangler.toml
-      - "8787"
+  tribute-console:
+    build:
+      context: ./nginx
     environment:
-      NODE_ENV: development
-      EXAMPLE_ORIGIN_TOKEN: local-dev-secret
-      WRANGLER_TELEMETRY_DISABLE: "1"
+      LISTEN_IPV6: "0"
     ports:
-      - "8787:8787"
+      - "8080:80"
     volumes:
-      - .:/app
-      - wrangler_state:/app/.wrangler/state
+      - ./nginx/html:/usr/share/nginx/html:ro
+      - ./nginx/conf/default.conf:/etc/nginx/conf.d/default.conf:ro
 
   fastapi-origin:
     build:
       context: ./examples/origins/fastapi
     environment:
       TRIBUTE_API_KEY: local-dev-secret
+      TRIBUTE_ROOT_PATH: /apps/fastapi
     ports:
-      - "9000:9000"
+      - "9100:9000"
 
   fastify-origin:
     build:
@@ -76,9 +84,7 @@ services:
     working_dir: /app
     entrypoint: ["/bin/sh", "/app/scripts/docker/bootstrap.sh"]
     depends_on:
-      - tribute-api
-      - tribute-proxy
-      - tribute-dos
+      - tribute-workers
       - fastapi-origin
       - fastify-origin
     volumes:

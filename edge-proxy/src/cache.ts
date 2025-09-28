@@ -1,6 +1,10 @@
 import type { ProxyEnv, CachedReceipt, CachedEstimate } from "./env";
 import type { Receipt } from "@tribute/durable-objects";
 
+export const RECEIPT_ID_PREFIX = "receipt-id::";
+
+export const receiptIdCacheKey = (receiptId: string): string => `${RECEIPT_ID_PREFIX}${receiptId}`;
+
 export const getCachedReceipt = async (env: ProxyEnv, key: string): Promise<CachedReceipt | null> => {
   const serialized = await env.RECEIPTS_KV.get(key, "json");
   if (!serialized) {
@@ -28,6 +32,14 @@ export const putReceiptAndArtifact = async (
 ) => {
   await env.RECEIPTS_KV.put(key, JSON.stringify(receipt), {
     expirationTtl: 60 * 60 * 24 * 30,
+  });
+  await env.RECEIPTS_KV.put(receiptIdCacheKey(receipt.receiptId), JSON.stringify(receipt), {
+    expirationTtl: 60 * 60 * 24 * 30,
+    metadata: {
+      userId: receipt.userId,
+      merchantId: receipt.merchantId,
+      timestamp: receipt.timestamp,
+    },
   });
   if (receipt.contentHash) {
     await env.ARTIFACTS_R2.put(receipt.contentHash, body, {

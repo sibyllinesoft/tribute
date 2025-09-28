@@ -6,6 +6,7 @@ describe("dos index exports", () => {
   it("exposes durable objects and helpers", () => {
     expect(pkg.RedeemDurableObject).toBeDefined();
     expect(pkg.MerchantDurableObject).toBeDefined();
+    expect(pkg.MerchantAppDurableObject).toBeDefined();
     expect(pkg.UserWalletDurableObject).toBeDefined();
     expect(pkg.HistoryDurableObject).toBeDefined();
     expect(pkg.EntitlementsDurableObject).toBeDefined();

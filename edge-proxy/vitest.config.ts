@@ -18,7 +18,6 @@ export default defineConfig({
       "src/merchant-client.ts",
       "src/origin.ts",
       "src/redeem-client.ts",
-      "src/token.ts",
     ],
   },
 });

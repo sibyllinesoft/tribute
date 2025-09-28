@@ -5,12 +5,16 @@ import App from "./App";
 import { initAuth } from "./auth";
 import "./styles.css";
 
-initAuth();
+const authInitialized = initAuth();
+
+const Root = authInitialized ? (
+  <SuperTokensWrapper>
+    <App />
+  </SuperTokensWrapper>
+) : (
+  <App />
+);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <SuperTokensWrapper>
-      <App />
-    </SuperTokensWrapper>
-  </React.StrictMode>
+  <React.StrictMode>{Root}</React.StrictMode>
 );

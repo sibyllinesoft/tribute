@@ -6,8 +6,19 @@ compatibility_date = "2024-03-25"
 ENVIRONMENT = "dev"
 
 [durable_objects]
-bindings = []
+bindings = [
+  { name = "MERCHANT_DO", class_name = "MerchantDurableObject" },
+  { name = "MERCHANT_APP_DO", class_name = "MerchantAppDurableObject" },
+  { name = "USER_WALLET_DO", class_name = "UserWalletDurableObject" },
+  { name = "HISTORY_DO", class_name = "HistoryDurableObject" },
+  { name = "ENTITLEMENTS_DO", class_name = "EntitlementsDurableObject" },
+  { name = "REDEEM_DO", class_name = "RedeemDurableObject" }
+]
 
 [[migrations]]
 tag = "v1"
 new_classes = ["RedeemDurableObject", "MerchantDurableObject", "UserWalletDurableObject", "HistoryDurableObject"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["MerchantAppDurableObject"]

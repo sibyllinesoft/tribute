@@ -52,6 +52,9 @@ importers:
 
   api:
     dependencies:
+      '@tribute/durable-objects':
+        specifier: workspace:^0.1.0
+        version: link:../dos
       itty-router:
         specifier: ^4.0.23
         version: 4.2.2
@@ -199,12 +202,12 @@ importers:
 
   integrations/js/packages/nest:
     dependencies:
-      '@tribute/core':
-        specifier: workspace:^0.1.0
-        version: link:../core
       '@nestjs/common':
         specifier: ^10.0.0
         version: 10.4.20(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@tribute/core':
+        specifier: workspace:^0.1.0
+        version: link:../core
       rxjs:
         specifier: ^7.0.0
         version: 7.8.2

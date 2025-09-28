@@ -1,8 +1,8 @@
 import { Router } from "itty-router";
-import { SignJWT } from "jose";
 
 interface ApiEnv {
   MERCHANT_DO: DurableObjectNamespace;
+  MERCHANT_APP_DO: DurableObjectNamespace;
   USER_WALLET_DO: DurableObjectNamespace;
   HISTORY_DO: DurableObjectNamespace;
   RECEIPTS_KV: KVNamespace;
@@ -16,86 +16,8 @@ const router = Router();
 
 router.get("/healthz", () => json({ status: "ok" }));
 
-router.post("/v1/tokens/issue", async (request: Request, env: ApiEnv) => {
-  const body = (await request.json()) as any;
-  const rid = body.rid as string;
-  const method = body.method as string;
-  const merchantId = body.merchantId as string;
-  const inputs = body.inputs;
-  const inputsHash = body.inputsHash as string | undefined;
-  const originHost = body.originHost as string | undefined;
-  const requestedMaxPrice = body.maxPrice !== undefined ? Number(body.maxPrice) : undefined;
-  const userId = request.headers.get("x-user-id");
-  if (!userId) {
-    return json({ error: "missing_user" }, 401);
-  }
-  const hash = inputsHash ?? (await sha256Base64Url(JSON.stringify(inputs ?? {})));
-  const merchantStub = env.MERCHANT_DO.get(env.MERCHANT_DO.idFromName(merchantId));
-  const priceRes = await merchantStub.fetch("https://merchant/estimate", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, path: rid, requestBytes: JSON.stringify(inputs ?? {}).length, responseBytes: 0 }),
-  });
-  if (!priceRes.ok) {
-    return json({ error: "price_lookup_failed" }, 500);
-  }
-  const priceBody = (await priceRes.json()) as {
-    estimated_price: number;
-    currency: string;
-    policy_ver: number;
-    policy_digest: string;
-    estimate_is_final?: boolean;
-  };
-  await ensureJwks(env);
-  const now = Math.floor(Date.now() / 1000);
-  const nonce = crypto.randomUUID();
-  const estimate = Number(priceBody.estimated_price ?? 0);
-  if (!Number.isFinite(estimate) || estimate < 0) {
-    return json({ error: "invalid_estimate" }, 400);
-  }
-  const policyVersion = priceBody.policy_ver;
-  const policyDigest = priceBody.policy_digest;
-  if (!policyDigest) {
-    return json({ error: "missing_policy_digest" }, 500);
-  }
-  const maxPrice = normalizeMaxPrice(requestedMaxPrice, estimate);
-  const priceSig = await sha256Base64Url(`${maxPrice}|${policyDigest}|${hash}`);
-  const claims = {
-    nonce,
-    sub: userId,
-    mer: merchantId,
-    rid,
-    method,
-    inputs_hash: hash,
-    max_price: maxPrice,
-    ccy: priceBody.currency,
-    policy_ver: policyVersion,
-    policy_digest: policyDigest,
-    aud: "proxy",
-    iss: "tribute",
-    iat: now,
-    exp: now + 300,
-    origin_host: originHost ?? "origin.example.com",
-    price_sig: priceSig,
-  } as const;
-
-  const token = await new SignJWT(claims as any)
-    .setProtectedHeader({ alg: "HS256", kid: "primary" })
-    .setIssuedAt(now)
-    .setExpirationTime(now + 300)
-    .sign(getSigningKey(env));
-
-  return json({
-    token,
-    exp: claims.exp,
-    estimate: {
-      estimatedPrice: estimate,
-      currency: priceBody.currency,
-      policyVersion,
-      policyDigest,
-      suggestedMaxPrice: maxPrice,
-    },
-  });
+router.post("/v1/tokens/issue", async (_request: Request) => {
+  return json({ error: "token_issuance_removed" }, 410);
 });
 
 router.post("/v1/dev/bootstrap", async (request: Request, env: ApiEnv) => {
@@ -236,6 +158,111 @@ router.get("/v1/artifacts/:hash", async ({ params }, env: ApiEnv) => {
   });
 });
 
+router.get("/v1/merchant-apps", async (_request: Request) => {
+  // Placeholder list until control plane catalogs apps.
+  return json({ apps: [] });
+});
+
+router.get("/v1/merchant-apps/:appId", async ({ params }, env: ApiEnv) => {
+  const appId = params?.appId;
+  if (!appId) {
+    return json({ error: "missing_app_id" }, 400);
+  }
+  const stub = getMerchantAppStub(env, appId);
+  const res = await stub.fetch("https://merchant-app/config", { method: "GET" });
+  if (res.status === 404) {
+    return json(defaultMerchantAppConfig(appId));
+  }
+  if (!res.ok) {
+    const detail = await safeText(res);
+    return json({ error: "merchant_app_fetch_failed", detail }, res.status);
+  }
+  const config = await res.json();
+  return json(config);
+});
+
+router.post("/v1/merchant-apps/:appId", async (request: Request, env: ApiEnv) => {
+  const url = new URL(request.url);
+  const appId = url.pathname.split("/").pop();
+  if (!appId) {
+    return json({ error: "missing_app_id" }, 400);
+  }
+  const stub = getMerchantAppStub(env, appId);
+  const res = await stub.fetch("https://merchant-app/config", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: await request.text(),
+  });
+  return forward(res);
+});
+
+router.post("/v1/merchant-apps/:appId/routes", async (request: Request, env: ApiEnv) => {
+  const appId = new URL(request.url).pathname.split("/")[3] ?? null;
+  if (!appId) {
+    return json({ error: "missing_app_id" }, 400);
+  }
+  const stub = getMerchantAppStub(env, appId);
+  const res = await stub.fetch("https://merchant-app/routes", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: await request.text(),
+  });
+  return forward(res);
+});
+
+router.patch("/v1/merchant-apps/:appId/routes/:routeId", async (request: Request, env: ApiEnv) => {
+  const { appId, routeId } = (request as any).params ?? {};
+  const finalAppId = appId ?? new URL(request.url).pathname.split("/")[3];
+  const finalRouteId = routeId ?? new URL(request.url).pathname.split("/")[5];
+  if (!finalAppId || !finalRouteId) {
+    return json({ error: "missing_route_context" }, 400);
+  }
+  const stub = getMerchantAppStub(env, finalAppId);
+  const res = await stub.fetch(`https://merchant-app/routes/${finalRouteId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: await request.text(),
+  });
+  return forward(res);
+});
+
+router.delete("/v1/merchant-apps/:appId/routes/:routeId", async ({ params }, env: ApiEnv) => {
+  const appId = params?.appId;
+  const routeId = params?.routeId;
+  if (!appId || !routeId) {
+    return json({ error: "missing_route_context" }, 400);
+  }
+  const stub = getMerchantAppStub(env, appId);
+  const res = await stub.fetch(`https://merchant-app/routes/${routeId}`, {
+    method: "DELETE",
+  });
+  return forward(res);
+});
+
+router.post("/v1/merchant-apps/:appId/openapi/refresh", async ({ params }, env: ApiEnv) => {
+  const appId = params?.appId;
+  if (!appId) {
+    return json({ error: "missing_app_id" }, 400);
+  }
+  const stub = getMerchantAppStub(env, appId);
+  const res = await stub.fetch("https://merchant-app/openapi/sync", {
+    method: "POST",
+  });
+  return forward(res);
+});
+
+router.post("/v1/merchant-apps/:appId/sitemap/refresh", async ({ params }, env: ApiEnv) => {
+  const appId = params?.appId;
+  if (!appId) {
+    return json({ error: "missing_app_id" }, 400);
+  }
+  const stub = getMerchantAppStub(env, appId);
+  const res = await stub.fetch("https://merchant-app/sitemap/sync", {
+    method: "POST",
+  });
+  return forward(res);
+});
+
 router.all("*", () => json({ error: "not_found" }, 404));
 
 export default {
@@ -250,50 +277,22 @@ const safeText = async (response: Response): Promise<string> => {
   }
 };
 
-const ensureJwks = async (env: ApiEnv) => {
-  const existing = await env.JWK_KV.get("signing/jwks");
-  if (existing) return;
-  const key = base64UrlEncode(env.TOKEN_SIGNING_KEY);
-  const jwks = {
-    keys: [
-      {
-        kty: "oct",
-        k: key,
-        alg: "HS256",
-        kid: "primary",
-      },
-    ],
-  };
-  await env.JWK_KV.put("signing/jwks", JSON.stringify(jwks));
-};
-
-const getSigningKey = (env: ApiEnv): Uint8Array => new TextEncoder().encode(env.TOKEN_SIGNING_KEY);
-
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
   });
 
-const sha256Base64Url = async (input: string): Promise<string> => {
-  const data = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return base64UrlEncode(digest);
-};
+const forward = (response: Response) => new Response(response.body, { status: response.status, headers: response.headers });
 
-const normalizeMaxPrice = (requested: number | undefined, estimate: number): number => {
-  if (typeof requested === "number" && Number.isFinite(requested) && !Number.isNaN(requested) && requested > 0) {
-    return Number(Math.max(requested, estimate).toFixed(6));
-  }
-  const padding = estimate * 1.25;
-  return Number(Math.max(padding, estimate).toFixed(6));
-};
+const getMerchantAppStub = (env: ApiEnv, appId: string) => env.MERCHANT_APP_DO.get(env.MERCHANT_APP_DO.idFromName(appId));
 
-const base64UrlEncode = (input: ArrayBuffer | string): string => {
-  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : new Uint8Array(input);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-};
+const defaultMerchantAppConfig = (appId: string) => ({
+  appId,
+  merchantId: appId,
+  displayName: `App ${appId}`,
+  origin: null,
+  routes: [],
+  updatedAt: new Date().toISOString(),
+  exists: false,
+});

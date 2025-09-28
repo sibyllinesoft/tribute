@@ -1,18 +1,20 @@
 /* c8 ignore start */
 /* istanbul ignore file */
-import { receiptCacheKey, type PaymentTokenClaims, type PricingMode, type MerchantConfig } from "@tribute/durable-objects";
+import { receiptCacheKey, type PaymentTokenClaims, type PricingMode, type MerchantConfig, type MerchantAppConfig, type MerchantRouteConfig } from "@tribute/durable-objects";
 import type { ProxyEnv } from "./env";
-import { extractBearer, verifyPaymentToken } from "./token";
 import { sha256Base64Url } from "./crypto";
 import { getCachedReceipt, putReceiptAndArtifact, getCachedEstimate, putCachedEstimate } from "./cache";
 import { MerchantClient } from "./merchant-client";
+import { MerchantAppClient } from "./merchant-app-client";
 import { RedeemClient } from "./redeem-client";
 import { buildOriginRequest } from "./origin";
 import { buildProxyContextHeader } from "./context";
 import { EntitlementsClient } from "./entitlements-client";
+import { maybeHandleManagementRequest, notifyReceiptEvent } from "./management";
 
 const JSON_HEADERS = { "content-type": "application/json" } as const;
 const DEFAULT_ESTIMATE_TTL_SECONDS = 90;
+const LOCALHOST_SUFFIX = ".localhost";
 
 interface EstimateResult {
   estimatedPrice: number;
@@ -42,10 +44,12 @@ interface EntitlementGrant extends RouteEntitlementRule {}
 export default {
   async fetch(request: Request, env: ProxyEnv, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await handleRequest(request, env, ctx);
+      const response = await handleRequest(request, env, ctx);
+      return applyCors(request, env, response);
     } catch (error) {
       const body = JSON.stringify({ error: "proxy_failure", detail: `${error}` });
-      return new Response(body, { status: 500, headers: JSON_HEADERS });
+      const response = new Response(body, { status: 500, headers: JSON_HEADERS });
+      return applyCors(request, env, response);
     }
   },
 };
@@ -53,13 +57,86 @@ export default {
 /* c8 ignore stop */
 
 const handleRequest = async (request: Request, env: ProxyEnv, ctx: ExecutionContext): Promise<Response> => {
-  const token = extractBearer(request.headers.get("authorization"));
-  if (!token) {
-    return new Response(JSON.stringify({ error: "missing_token" }), { status: 401, headers: JSON_HEADERS });
+  const managementResponse = await maybeHandleManagementRequest(request, env, ctx);
+  if (managementResponse) {
+    return managementResponse;
+  }
+  if (request.method.toUpperCase() === "OPTIONS") {
+    return handlePreflight(request, env);
+  }
+  const url = new URL(request.url);
+  let appId = url.hostname;
+  if (appId.endsWith(LOCALHOST_SUFFIX)) {
+    appId = appId.slice(0, -LOCALHOST_SUFFIX.length);
   }
 
-  const claims = await verifyPaymentToken(token, env);
-  const tokenFingerprint = await sha256Base64Url(token);
+  const merchantAppClient = new MerchantAppClient(env.MERCHANT_APP_DO);
+  let merchantAppConfig: MerchantAppConfig | null = null;
+  try {
+    merchantAppConfig = await merchantAppClient.getConfig(appId);
+  } catch (_error) {
+    merchantAppConfig = null;
+  }
+  const merchantId = merchantAppConfig?.merchantId ?? appId;
+
+  const merchantClient = new MerchantClient(env.MERCHANT_DO);
+  const merchantConfig = await merchantClient.getConfig(merchantId);
+  const routeConfig = resolveMerchantAppRoute(merchantAppConfig, request.method, url.pathname);
+
+  const identity = resolveUserIdentity(request, merchantConfig);
+  if (!identity) {
+    return proxyPassthrough(request, env, merchantConfig, undefined);
+  }
+
+  const claimedRid = resolveRouteId(routeConfig?.path ?? url.pathname, request.method);
+  const now = Math.floor(Date.now() / 1000);
+  const nonce = crypto.randomUUID();
+
+  const bodyBytes = await readBodyBytes(request);
+  const preflightConfig = merchantConfig.preflight ?? { auto: true, defaultCap: 0.5, identity: { header: "authorization", required: true } };
+
+  if (!preflightConfig.auto) {
+    return proxyPassthrough(request, env, merchantConfig, bodyBytes);
+  }
+
+  const inputsHash = await computeInputsHash(url, request.method, bodyBytes);
+
+  const forcedPricingMode = routeConfig?.pricing.mode === "subscription" ? "subscription" : null;
+  const requestedPricingMode = forcedPricingMode ?? resolvePricingMode(request.headers.get("x-meter-mode") ?? request.headers.get("x-pricing-mode"));
+  const defaultCap =
+    routeConfig?.pricing.mode === "metered"
+      ? routeConfig.pricing.flatAmount
+      : preflightConfig.defaultCap ?? 0.5;
+  const resolvedCap = resolveCap({
+    header: request.headers.get("x-meter-max-price") ?? request.headers.get("x-max-price"),
+    defaultCap,
+    capMultiplier: preflightConfig.capMultiplier,
+  });
+  if (resolvedCap.error) {
+    return resolvedCap.error;
+  }
+  const maxPrice = routeConfig?.pricing.mode === "subscription" ? 0 : resolvedCap.value;
+
+  const claims: PaymentTokenClaims = {
+    nonce,
+    sub: identity,
+    mer: merchantConfig.merchantId ?? merchantId,
+    rid: claimedRid,
+    method: request.method,
+    inputs_hash: inputsHash,
+    max_price: maxPrice,
+    ccy: merchantConfig.pricing.priceUnit ?? "USD",
+    policy_ver: merchantConfig.pricing.policyVersion,
+    policy_digest: merchantConfig.pricing.policyDigest,
+    aud: "proxy",
+    iss: "tribute",
+    iat: now,
+    exp: now + 300,
+    origin_host: new URL(merchantConfig.origin.baseUrl).hostname,
+    price_sig: await sha256Base64Url(`${maxPrice}|${merchantConfig.pricing.policyDigest}|${inputsHash}`),
+  } as PaymentTokenClaims;
+
+  const tokenFingerprint = await sha256Base64Url(`${claims.mer}|${claims.sub}|${claims.nonce}`);
   const proxyContext = await buildProxyContextHeader(claims, claims.sub, {});
   const receiptKey = receiptCacheKey(claims.rid, claims.inputs_hash, claims.policy_ver);
 
@@ -68,23 +145,17 @@ const handleRequest = async (request: Request, env: ProxyEnv, ctx: ExecutionCont
     return buildResponse(cached.receipt, cached.content, cached.contentType, tokenFingerprint, proxyContext);
   }
 
-  const requestedPricingMode = resolvePricingMode(request.headers.get("x-pricing-mode"));
-  const maxPriceResult = resolveMaxPrice(request.headers.get("x-max-price"), claims.max_price);
-  if (maxPriceResult.error) {
-    return maxPriceResult.error;
-  }
-  const maxPrice = maxPriceResult.value;
-
-  const merchantClient = new MerchantClient(env.MERCHANT_DO);
-  const merchantConfig = await merchantClient.getConfig(claims.mer);
   const policyMismatch = ensurePolicyCompatibility(merchantConfig.pricing.policyVersion, merchantConfig.pricing.policyDigest, claims);
   if (policyMismatch) {
     return policyMismatch;
   }
 
-  const routeEntitlement = resolveRouteEntitlement(merchantConfig, claims.rid);
+  const routeEntitlement = resolveRouteEntitlement(merchantConfig, claims.rid, routeConfig);
   let entitlementGrant: EntitlementGrant | null = null;
   const entitlementsClient = routeEntitlement ? new EntitlementsClient(env.ENTITLEMENTS_DO) : null;
+  if (routeEntitlement && !entitlementsClient) {
+    return subscriptionRequired(routeEntitlement, { reason: "entitlements_unconfigured", upgradeUrl: routeEntitlement.upgradeUrl });
+  }
   if (routeEntitlement && entitlementsClient) {
     const decision = await entitlementsClient.access({
       userId: claims.sub,
@@ -100,8 +171,6 @@ const handleRequest = async (request: Request, env: ProxyEnv, ctx: ExecutionCont
     }
   }
 
-  const bodyBytes = await readBodyBytes(request);
-
   if (entitlementGrant) {
     return handleEntitledRequest({
       request,
@@ -115,6 +184,7 @@ const handleRequest = async (request: Request, env: ProxyEnv, ctx: ExecutionCont
       entitlementsClient,
       bodyBytes,
       ctx,
+      appId,
     });
   }
 
@@ -129,6 +199,9 @@ const handleRequest = async (request: Request, env: ProxyEnv, ctx: ExecutionCont
     requestedPricingMode,
     maxPrice,
     bodyBytes,
+    routeConfig,
+    ctx,
+    appId,
   });
 };
 
@@ -144,6 +217,7 @@ const handleEntitledRequest = async ({
   entitlementsClient,
   bodyBytes,
   ctx,
+  appId,
 }: {
   request: Request;
   env: ProxyEnv;
@@ -156,6 +230,7 @@ const handleEntitledRequest = async ({
   entitlementsClient: EntitlementsClient | null;
   bodyBytes: Uint8Array | null;
   ctx: ExecutionContext;
+  appId: string;
 }): Promise<Response> => {
   const originContext = await buildOriginRequest(request, merchantConfig, env);
   const originRequest = new Request(originContext.url.toString(), {
@@ -212,6 +287,10 @@ const handleEntitledRequest = async ({
     cacheControl: originResponse.headers.get("cache-control") ?? undefined,
   });
 
+  safeWaitUntil(ctx, async () => {
+    await notifyReceiptEvent(env, receipt, appId);
+  });
+
   return buildResponse(receipt, contentBuffer, originResponse.headers.get("content-type") ?? undefined, tokenFingerprint, proxyContext);
 };
 
@@ -226,6 +305,9 @@ export const handleMeteredRequest = async ({
   requestedPricingMode,
   maxPrice,
   bodyBytes,
+  routeConfig,
+  ctx,
+  appId,
 }: {
   request: Request;
   env: ProxyEnv;
@@ -237,6 +319,9 @@ export const handleMeteredRequest = async ({
   requestedPricingMode: PricingMode;
   maxPrice: number;
   bodyBytes: Uint8Array | null;
+  routeConfig?: MerchantRouteConfig | null;
+  ctx?: ExecutionContext;
+  appId: string;
 }): Promise<Response> => {
   const redeem = new RedeemClient(env.REDEEM_DO);
   const shardId = `${claims.sub}:${claims.mer}`;
@@ -454,6 +539,10 @@ export const handleMeteredRequest = async ({
     cacheControl: originResponse.headers.get("cache-control") ?? undefined,
   });
 
+  safeWaitUntil(ctx, async () => {
+    await notifyReceiptEvent(env, receipt, appId);
+  });
+
   return buildResponse(receipt, contentBuffer, originResponse.headers.get("content-type") ?? undefined, tokenFingerprint, proxyContext);
 };
 
@@ -627,26 +716,6 @@ export const resolvePricingMode = (header: string | null): PricingMode => {
   return "estimate-first";
 };
 
-export const resolveMaxPrice = (header: string | null, tokenMax: number): { value: number; error?: Response } => {
-  if (!header || header.trim() === "") {
-    return { value: tokenMax };
-  }
-  const parsed = Number(header);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return {
-      value: tokenMax,
-      error: new Response(JSON.stringify({ error: "invalid_max_price" }), { status: 400, headers: JSON_HEADERS }),
-    };
-  }
-  if (parsed > tokenMax) {
-    return {
-      value: tokenMax,
-      error: new Response(JSON.stringify({ error: "max_price_exceeds_token" }), { status: 400, headers: JSON_HEADERS }),
-    };
-  }
-  return { value: parsed };
-};
-
 export const appendEstimateSuffix = (path: string, suffix: string): string => {
   if (path.endsWith(suffix)) {
     return path;
@@ -692,6 +761,67 @@ export const cloneBody = (body: Uint8Array | null): BodyInit | undefined => {
     return undefined;
   }
   return body.slice();
+};
+
+const parseList = (value?: string): string[] =>
+  (value ?? "")
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+const applyCors = (request: Request, env: ProxyEnv, response: Response): Response => {
+  if (response.status === 101 || (response as any).webSocket) {
+    return response;
+  }
+  const origin = request.headers.get("origin");
+  if (!origin) {
+    return response;
+  }
+  if (response.headers.has("access-control-allow-origin")) {
+    return response;
+  }
+  const allowed = parseList(env.ALLOWED_ORIGINS);
+  if (allowed.length === 0) {
+    return response;
+  }
+  const allowAll = allowed.includes("*");
+  const normalizedOrigin = origin.toLowerCase();
+  if (!allowAll && !allowed.includes(normalizedOrigin)) {
+    return response;
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set("access-control-allow-origin", allowAll ? "*" : origin);
+  if (!allowAll) {
+    const existingVary = headers.get("vary");
+    headers.set("vary", existingVary ? `${existingVary}, Origin` : "Origin");
+    if (!headers.has("access-control-allow-credentials")) {
+      headers.set("access-control-allow-credentials", "true");
+    }
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    headers,
+  });
+};
+
+const handlePreflight = (request: Request, env: ProxyEnv): Response => {
+  const headers = new Headers();
+  const requestHeaders = request.headers.get("access-control-request-headers");
+  if (requestHeaders) {
+    headers.set("access-control-allow-headers", requestHeaders);
+    headers.set("vary", "Access-Control-Request-Headers");
+  } else {
+    headers.set(
+      "access-control-allow-headers",
+      "authorization,x-meter-max-price,x-meter-mode,x-pricing-mode,x-user-id,content-type"
+    );
+  }
+  headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  headers.set("access-control-max-age", "600");
+  const response = new Response(null, { status: 204, headers });
+  return applyCors(request, env, response);
 };
 
 export const parseEstimatePayload = async (response: Response): Promise<any> => {
@@ -803,7 +933,9 @@ export const ensurePolicyCompatibility = (
   serverPolicyDigest: string,
   claims: PaymentTokenClaims
 ): Response | null => {
-  if (serverPolicyVersion !== claims.policy_ver) {
+  const expectedVersion = Number(serverPolicyVersion);
+  const claimVersion = Number(claims.policy_ver);
+  if (Number.isFinite(expectedVersion) && Number.isFinite(claimVersion) && expectedVersion !== claimVersion) {
     return new Response(
       JSON.stringify({
         error: "policy_mismatch",
@@ -827,10 +959,168 @@ export const ensurePolicyCompatibility = (
   return null;
 };
 
-export const resolveRouteEntitlement = (merchantConfig: MerchantConfig, rid: string): RouteEntitlementRule | null => {
+const resolveUserIdentity = (request: Request, config: MerchantConfig): string | null => {
+  const identity = config.preflight?.identity ?? { header: "authorization", required: true };
+  if (!identity.header) {
+    return null;
+  }
+  const value = request.headers.get(identity.header);
+  if ((!value || value.trim() === "") && identity.required) {
+    return null;
+  }
+  return value?.trim() ?? null;
+};
+
+const resolveRouteId = (pathname: string, method: string): string => {
+  return pathname || `${method.toUpperCase()} /`;
+};
+
+const computeInputsHash = async (url: URL, method: string, bodyBytes: Uint8Array | null): Promise<string> => {
+  const queryEntries = Array.from(url.searchParams.entries());
+  const normalized = canonicalJson({
+    method: method.toUpperCase(),
+    path: url.pathname,
+    query: queryEntries,
+    bodyHash: bodyBytes ? await sha256Base64Url(bodyBytes.buffer) : null,
+  });
+  return sha256Base64Url(normalized);
+};
+
+const resolveCap = ({
+  header,
+  defaultCap,
+  capMultiplier,
+}: {
+  header: string | null;
+  defaultCap: number;
+  capMultiplier?: number;
+}): { value: number; error?: Response } => {
+  if (!header || header.trim() === "") {
+    return { value: defaultCap };
+  }
+  const parsed = Number(header);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return {
+      value: defaultCap,
+      error: new Response(JSON.stringify({ error: "invalid_max_price" }), { status: 400, headers: JSON_HEADERS }),
+    };
+  }
+  if (capMultiplier && parsed > defaultCap * capMultiplier) {
+    return {
+      value: defaultCap,
+      error: new Response(
+        JSON.stringify({ error: "max_price_exceeds_limit", limit: defaultCap * capMultiplier }),
+        { status: 400, headers: JSON_HEADERS }
+      ),
+    };
+  }
+  return { value: parsed };
+};
+
+const proxyPassthrough = async (
+  request: Request,
+  env: ProxyEnv,
+  merchantConfig: MerchantConfig,
+  bodyBytes?: Uint8Array | null
+): Promise<Response> => {
+  const originContext = await buildOriginRequest(request, merchantConfig, env);
+  let body: BodyInit | undefined;
+  if (bodyBytes === undefined) {
+    body = request.body ?? undefined;
+  } else if (bodyBytes === null) {
+    body = undefined;
+  } else {
+    body = cloneBody(bodyBytes);
+  }
+  const originRequest = new Request(originContext.url.toString(), {
+    method: request.method,
+    headers: originContext.headers,
+    body,
+    redirect: request.redirect,
+  });
+  return fetch(originRequest);
+};
+
+export const resolveRouteEntitlement = (
+  merchantConfig: MerchantConfig,
+  rid: string,
+  appRoute?: MerchantRouteConfig | null
+): RouteEntitlementRule | null => {
   const entConfig = merchantConfig.entitlements?.routes;
-  if (!entConfig) return null;
-  return entConfig[rid] ?? entConfig["*"] ?? null;
+  const direct = entConfig ? entConfig[rid] ?? entConfig["*"] ?? null : null;
+  if (direct) {
+    return direct;
+  }
+  if (appRoute && appRoute.pricing.mode === "subscription") {
+    return {
+      feature: appRoute.pricing.feature,
+      upgradeUrl: appRoute.pricing.upgradeUrl,
+      fallbackMode: "block",
+    };
+  }
+  return null;
+};
+
+
+export const resolveMerchantAppRoute = (
+  appConfig: MerchantAppConfig | null,
+  method: string,
+  path: string
+): MerchantRouteConfig | null => {
+  if (!appConfig) {
+    return null;
+  }
+  const normalizedMethod = method.toUpperCase();
+  for (const route of appConfig.routes ?? []) {
+    if ((route.method ?? "GET").toUpperCase() !== normalizedMethod) {
+      continue;
+    }
+    if (routePathMatches(route.path, path)) {
+      return route;
+    }
+  }
+  return null;
+};
+
+const routePathMatches = (template: string, actual: string): boolean => {
+  if (template === actual) {
+    return true;
+  }
+  const normalize = (value: string) => (value.endsWith('/') && value !== '/' ? value.slice(0, -1) : value);
+  const normalizedTemplate = normalize(template);
+  const normalizedActual = normalize(actual);
+  if (normalizedTemplate === normalizedActual) {
+    return true;
+  }
+  const templateParts = normalizedTemplate.split('/').filter(Boolean);
+  const actualParts = normalizedActual.split('/').filter(Boolean);
+
+  const wildcardIndex = templateParts.indexOf('*');
+  if (wildcardIndex === -1 && templateParts.length !== actualParts.length) {
+    return false;
+  }
+  if (wildcardIndex !== -1 && actualParts.length < wildcardIndex) {
+    return false;
+  }
+
+  for (let i = 0; i < templateParts.length; i += 1) {
+    const templateSegment = templateParts[i];
+    if (templateSegment === '*') {
+      return true;
+    }
+    const actualSegment = actualParts[i];
+    if (actualSegment === undefined) {
+      return false;
+    }
+    if (templateSegment.startsWith(':')) {
+      continue;
+    }
+    if (templateSegment !== actualSegment) {
+      return false;
+    }
+  }
+
+  return wildcardIndex !== -1 || templateParts.length === actualParts.length;
 };
 
 export const subscriptionRequired = (

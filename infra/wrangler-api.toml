@@ -16,6 +16,11 @@ name = "MERCHANT_DO"
 class_name = "MerchantDurableObject"
 script_name = "tribute-durable-objects"
 
+[[durable_objects.bindings]]
+name = "MERCHANT_APP_DO"
+class_name = "MerchantAppDurableObject"
+script_name = "tribute-durable-objects"
+
 [[kv_namespaces]]
 binding = "JWK_KV"
 id = "__REPLACE_WITH_JWK_NS__"

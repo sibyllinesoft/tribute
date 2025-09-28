@@ -1,3 +1,5 @@
+import openaiSpecJson from "../../../../../specs/openai-openapi.json";
+
 export {
   CanonicalBody,
   CanonicalRequest,
@@ -30,3 +32,5 @@ export { computePolicyDigest, PolicyContext, PolicyDigest } from "./policy";
 export { UsageReport, UsageTracker, enrichResponse, wrapIterable } from "./usage";
 
 export { diffOpenapi, verifyEstimateSignature, simulateReceipt } from "./devtools";
+
+export const openaiSpec = openaiSpecJson;

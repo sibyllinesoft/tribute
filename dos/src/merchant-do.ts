@@ -37,6 +37,25 @@ const merchantConfigSchema = z.object({
     estimateTtlSeconds: z.number().int().optional(),
     rules: z.array(pricingRuleSchema),
   }),
+  preflight: z
+    .object({
+      auto: z.boolean().default(true),
+      defaultCap: z.number().nonnegative().default(0.5),
+      capMultiplier: z.number().positive().optional(),
+      identity: z
+        .object({
+          header: z.string().default("authorization"),
+          required: z.boolean().default(true),
+        })
+        .default({ header: "authorization", required: true }),
+    })
+    .default({ auto: true, defaultCap: 0.5, identity: { header: "authorization", required: true } }),
+  wallet: z
+    .object({
+      mode: z.enum(["merchant", "saas"]).default("merchant"),
+      endpoint: z.string().optional(),
+    })
+    .default({ mode: "merchant" }),
   entitlements: z
     .object({
       routes: z.record(
@@ -86,7 +105,19 @@ export class MerchantDurableObject extends DurableObjectBase {
     }
 
     if (method === "POST" && url.pathname === "/config") {
-      const body = merchantConfigSchema.parse(await request.json());
+      let jsonBody: unknown;
+      try {
+        jsonBody = await request.json();
+      } catch (error) {
+        return new Response(JSON.stringify({ error: "invalid_json", detail: `${error}` }), { status: 400, headers: JSON_HEADERS });
+      }
+      let body: MerchantConfig;
+      try {
+        body = merchantConfigSchema.parse(jsonBody);
+      } catch (error) {
+        console.error("merchant_config_parse_failed", error);
+        return new Response(JSON.stringify({ error: "invalid_config", detail: `${error}` }), { status: 400, headers: JSON_HEADERS });
+      }
       await this.storage.put("config", body);
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: JSON_HEADERS });
     }

@@ -2,6 +2,7 @@
 .dist/
 build/
 coverage/
+dashboard/dist/
 
 # Node / pnpm
 node_modules/
@@ -27,6 +28,7 @@ pnpm-debug.log*
 *.env.*
 .dev.vars
 .dev.vars.*
+.dev.*.vars
 
 # Vite / tooling temp files
 *.timestamp-*

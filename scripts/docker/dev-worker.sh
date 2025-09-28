@@ -22,12 +22,15 @@ if [ ! -d node_modules ]; then
   pnpm install --frozen-lockfile
 fi
 
-DEV_VARS_FILE="${DEV_VARS_FILE:-/app/.dev.vars}"
+CONFIG_BASENAME=$(basename "${CONFIG}")
+CONFIG_PREFIX=${CONFIG_BASENAME%.toml}
+DEV_VARS_FILE="${DEV_VARS_FILE:-/app/.dev.${CONFIG_PREFIX}.vars}"
 >"${DEV_VARS_FILE}"
 
 write_dev_var() {
   local name="$1"
-  local value="${!name-}"
+  local value
+  value=$(printenv "$name" 2>/dev/null || true)
   if [ -n "${value}" ]; then
     printf '%s=%s\n' "$name" "$value" >>"${DEV_VARS_FILE}"
   fi
@@ -44,6 +47,19 @@ else
   rm -f "${DEV_VARS_FILE}"
 fi
 
+INSPECTOR_ARGS=()
+if [ "${WRANGLER_DISABLE_INSPECTOR:-false}" != "true" ]; then
+  inspector_port="${WRANGLER_INSPECTOR_PORT:-}"
+  if [ -z "${inspector_port}" ] && [[ "${PORT}" =~ ^[0-9]+$ ]]; then
+    inspector_port=$((PORT + 1000))
+  fi
+  if [ -n "${inspector_port}" ]; then
+    # Give each worker its own inspector port so concurrent dev servers don't
+    # collide on the default 9229 binding inside the container.
+    INSPECTOR_ARGS+=(--inspector-port "${inspector_port}")
+  fi
+fi
+
 exec pnpm wrangler dev \
   --config "${CONFIG}" \
   --ip "${IP_ADDR}" \
@@ -51,4 +67,5 @@ exec pnpm wrangler dev \
   --persist-to "${PERSIST_DIR}" \
   --local-protocol http \
   "${ENV_FILE_ARGS[@]}" \
+  "${INSPECTOR_ARGS[@]}" \
   "$@"

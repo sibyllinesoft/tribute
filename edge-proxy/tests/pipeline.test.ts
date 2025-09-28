@@ -115,6 +115,8 @@ describe("handleMeteredRequest integration", () => {
       requestedPricingMode: "estimate-first",
       maxPrice: 10,
       bodyBytes: null,
+      ctx: {} as any,
+      appId: "app.example",
     });
 
     expect(res.status).toBe(200);
@@ -153,6 +155,8 @@ describe("handleMeteredRequest integration", () => {
       requestedPricingMode: "estimate-first",
       maxPrice: 5,
       bodyBytes: new TextEncoder().encode("{}"),
+      ctx: {} as any,
+      appId: "app.example",
     });
 
     expect(res.status).toBe(502);
@@ -237,6 +241,8 @@ describe("handleMeteredRequest integration", () => {
       requestedPricingMode: "estimate-first",
       maxPrice: 10,
       bodyBytes: new TextEncoder().encode("{}"),
+      ctx: {} as any,
+      appId: "app.example",
     });
 
     expect(res.status).toBe(200);

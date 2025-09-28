@@ -7,6 +7,8 @@ logpush = true
 ENVIRONMENT = "dev"
 CACHE_MAX_KV_BYTES = 120000
 CACHE_TTL_SECONDS = 604800
+MANAGEMENT_ALLOWED_HOSTS = "localhost:8787 127.0.0.1:8787 localhost:5173 127.0.0.1:5173"
+ALLOWED_ORIGINS = "http://localhost:5173 http://127.0.0.1:5173"
 
 [[durable_objects.bindings]]
 name = "REDEEM_DO"
@@ -16,6 +18,11 @@ script_name = "tribute-durable-objects"
 [[durable_objects.bindings]]
 name = "MERCHANT_DO"
 class_name = "MerchantDurableObject"
+script_name = "tribute-durable-objects"
+
+[[durable_objects.bindings]]
+name = "MERCHANT_APP_DO"
+class_name = "MerchantAppDurableObject"
 script_name = "tribute-durable-objects"
 
 [[durable_objects.bindings]]

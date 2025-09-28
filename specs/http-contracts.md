@@ -1,57 +1,34 @@
 # HTTP Contracts
 
-## Token issuance
-
-```
-POST /v1/tokens/issue
-Headers: x-user-id: <internal user id>
-Body:
-{
-  "rid": "GET /v1/demo",     // canonical route id
-  "method": "GET",
-  "merchantId": "merchant-1",
-  "inputs": { ... },
-  "inputsHash": "optional precomputed hash",
-  "originHost": "origin.example.com",
-  "maxPrice": 1.25
-}
-Response 200:
-{
-  "token": "<jwt>",
-  "exp": 1711326113,
-  "estimate": {
-    "estimatedPrice": 1.0,
-    "currency": "USD",
-    "policyVersion": 9,
-    "policyDigest": "sha256:...",
-    "suggestedMaxPrice": 1.25
-  }
-}
-```
-
 ## Proxy invocation
 
 ```
 GET /v1/demo
 Headers:
-  Authorization: Bearer <payment-token>
-  X-Pricing-Mode: estimate-first | execute-only | estimate-is-final
-  X-Max-Price: 0.90   # optional override (<= token.max_price)
-  X-Client-Context: Bearer <optional app token>
+  Authorization: Bearer <app session token>
+  X-Meter-Mode: estimate-first | execute-only | estimate-is-final   # optional override
+  X-Meter-Max-Price: 2.00                                           # optional per-request cap override
 Response headers:
   X-Receipt-Id: <uuid>
   X-Content-Hash: <sha256 base64url>
-  X-Token-Fingerprint: <sha256 token hash>
+  X-Final-Price: <decimal>
   X-Proxy-Context: <base64 context envelope>
   X-Required-Entitlement: <feature flag>   # present on 402 subscription_required
 
-Response 402 (subscription required):
+Response 402 (cap exceeded):
 {
-  "error": "subscription_required",
-  "needed": "subscription:plan_pro",
+  "error": "cap_exceeded",
+  "required_max_price": 2.75,
+  "estimated_price": 2.68,
+  "policy_ver": 3,
   "upgrade_url": "https://billing.example.com/upgrade"
 }
 ```
+
+The proxy automatically estimates the upstream price using the merchant’s
+preflight defaults. If the estimate is less than or equal to the configured cap,
+execution continues and the wallet is settled. Otherwise the proxy short-circuits
+with `402` and no origin body leaks.
 
 ## Wallet APIs
 
@@ -61,8 +38,8 @@ Response 402 (subscription required):
 ## History and receipts
 
 - `GET /v1/history?cursor=...` — paginated receipt summaries.
-- `GET /v1/receipts/{id}` — returns signed JSON receipt (must own). Receipt payload includes `policyVersion`, `policyDigest`, `maxPrice`, `estimatedPrice`, `finalPrice`, `estDigest`, `observablesDigest`, `finalPriceSig`, `pricingMode`, `pricingUnattested`.
-- `GET /v1/artifacts/{hash}` — downloads cached artifact with ownership enforcement (future enhancement).
+- `GET /v1/receipts/{id}` — returns signed JSON receipt (must own).
+- `GET /v1/artifacts/{hash}` — downloads cached artifact (ownership enforcement forthcoming).
 
 ## Redeem Durable Object RPC
 

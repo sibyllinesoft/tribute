@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   resolvePricingMode,
-  resolveMaxPrice,
   appendEstimateSuffix,
   canonicalJson,
   readBodyBytes,
@@ -23,13 +22,6 @@ describe("index helpers", () => {
     expect(resolvePricingMode("EXECUTE-ONLY")).toBe("execute-only");
     expect(resolvePricingMode("invalid" as any)).toBe("estimate-first");
     expect(resolvePricingMode(null)).toBe("estimate-first");
-  });
-
-  it("validates max price", () => {
-    expect(resolveMaxPrice(null, 10).value).toBe(10);
-    expect(resolveMaxPrice("5", 10).value).toBe(5);
-    expect(resolveMaxPrice("0", 10).error?.status).toBe(400);
-    expect(resolveMaxPrice("50", 10).error?.status).toBe(400);
   });
 
   it("appends estimate suffix", () => {

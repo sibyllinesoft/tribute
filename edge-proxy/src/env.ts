@@ -3,6 +3,7 @@ import type { MerchantConfig, Receipt } from "@tribute/durable-objects";
 export interface ProxyEnv {
   REDEEM_DO: DurableObjectNamespace;
   MERCHANT_DO: DurableObjectNamespace;
+  MERCHANT_APP_DO: DurableObjectNamespace;
   USER_WALLET_DO: DurableObjectNamespace;
   HISTORY_DO: DurableObjectNamespace;
   ENTITLEMENTS_DO?: DurableObjectNamespace;
@@ -12,6 +13,7 @@ export interface ProxyEnv {
   ORIGIN_SECRETS?: KVNamespace;
   PROXY_SIGNING_KEY?: string;
   ALLOWED_ORIGINS?: string;
+  MANAGEMENT_ALLOWED_HOSTS?: string;
 }
 
 export interface CachedReceipt {

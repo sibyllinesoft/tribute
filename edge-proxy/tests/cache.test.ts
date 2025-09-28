@@ -5,6 +5,7 @@ import {
   putReceiptAndArtifact,
   getCachedEstimate,
   putCachedEstimate,
+  receiptIdCacheKey,
 } from "../src/cache";
 import type { ProxyEnv } from "../src/env";
 import type { Receipt } from "@tribute/durable-objects";
@@ -79,10 +80,20 @@ describe("cache", () => {
       contentType: "application/json",
     });
 
-    expect(env.RECEIPTS_KV.put).toHaveBeenCalledWith(
+    expect(env.RECEIPTS_KV.put).toHaveBeenNthCalledWith(
+      1,
       "key",
       JSON.stringify(baseReceipt),
       expect.objectContaining({ expirationTtl: expect.any(Number) })
+    );
+    expect(env.RECEIPTS_KV.put).toHaveBeenNthCalledWith(
+      2,
+      receiptIdCacheKey(baseReceipt.receiptId),
+      JSON.stringify(baseReceipt),
+      expect.objectContaining({
+        expirationTtl: expect.any(Number),
+        metadata: expect.objectContaining({ userId: baseReceipt.userId, merchantId: baseReceipt.merchantId }),
+      })
     );
     expect(env.ARTIFACTS_R2.put).toHaveBeenCalledWith(
       baseReceipt.contentHash,

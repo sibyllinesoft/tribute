@@ -10,8 +10,17 @@ matches the `TRIBUTE_API_KEY` environment variable (defaults to
 `local-dev-secret`). When the Tribute proxy rewrites origin authentication, it
 will inject this header automatically.
 
-- `fastapi/` — Python implementation served by Uvicorn on port `9000`.
-- `fastify/` — Node.js implementation served by Fastify on port `3000` (Docker Compose maps it to host port `3300`).
+- `fastapi/` — Python implementation served by Uvicorn on port `9000` (Docker Compose maps it to host port `9100`).
+- `fastify/` — Node.js implementation served by Fastify on port `3000` (Docker Compose maps it to host port `3300`) and exposes Swagger UI at `/docs` plus a sitemap at `/sitemap.xml`.
+
+> **OpenAPI & sitemap discovery**: The Fastify example now publishes a Swagger
+> document at `/docs/json` and a sitemap at `/sitemap.xml`, while FastAPI
+> provides `/openapi.json` and `/sitemap.xml` out of the box. The Tribute proxy
+> and dashboard rely on these documents to auto-discover routes that need
+> pricing rules and surface site pages separately. If you adapt these examples,
+> ensure your origin exposes both a JSON OpenAPI specification (e.g., via
+> Swagger UI) and a sitemap so the discovery flow can populate pricing entries
+> automatically.
 
 You can run either service locally with Docker, for example:
 
